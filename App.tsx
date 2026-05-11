@@ -14,6 +14,7 @@ import {
 } from 'react-native'
 import { loadFamilyStatus, type FamilyStatus } from './lib/family'
 import { supabase } from './lib/supabase'
+import { createMobileUpload, pickSingleMemory } from './lib/upload'
 
 type TabKey = 'home' | 'upload' | 'family' | 'notifications' | 'menu'
 type Locale = 'zh' | 'en'
@@ -71,9 +72,14 @@ const copy = {
     },
     upload: {
       title: '发送到家庭记忆墙',
-      subtitle: '下一阶段接入 Android 相册选择、预览、标题备注和上传进度。',
+      subtitle: '选择 Android 相册里的照片或视频，填写标题和备注后发送。',
       steps: ['选择照片 / 视频', '预览与裁剪', '填写标题 / 备注', '显示上传进度'],
       primary: '选择媒体',
+      titleInput: '标题',
+      noteInput: '备注（可选）',
+      send: '上传到家庭墙',
+      picked: '已选择媒体',
+      success: '上传成功，等待家庭墙同步。',
     },
     family: {
       title: '家庭成员与邀请',
@@ -133,9 +139,14 @@ const copy = {
     },
     upload: {
       title: 'Send to family wall',
-      subtitle: 'Next phase adds Android gallery picker, preview, title/note, and progress.',
+      subtitle: 'Choose a photo or video from Android, add a title/note, then send it.',
       steps: ['Pick photo / video', 'Preview and crop', 'Add title / note', 'Show upload progress'],
       primary: 'Choose media',
+      titleInput: 'Title',
+      noteInput: 'Note (optional)',
+      send: 'Upload to family wall',
+      picked: 'Media selected',
+      success: 'Upload complete. Waiting for family wall sync.',
     },
     family: {
       title: 'Family and invites',
@@ -236,6 +247,12 @@ export default function App() {
   const [familyStatus, setFamilyStatus] = useState<FamilyStatus | null>(null)
   const [familyError, setFamilyError] = useState<string | null>(null)
   const [isFamilyLoading, setIsFamilyLoading] = useState(false)
+  const [uploadTitle, setUploadTitle] = useState('')
+  const [uploadNote, setUploadNote] = useState('')
+  const [selectedAsset, setSelectedAsset] = useState<{ uri: string; fileName?: string | null } | null>(null)
+  const [pickedAsset, setPickedAsset] = useState<Awaited<ReturnType<typeof pickSingleMemory>>>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null)
   const t = copy[locale]
   const active = useMemo(() => t[activeTab], [activeTab, t])
 
@@ -273,6 +290,51 @@ export default function App() {
     await supabase.auth.signOut()
     setSession(null)
     setFamilyStatus(null)
+  }
+
+  async function chooseMedia() {
+    try {
+      const asset = await pickSingleMemory()
+      if (!asset) return
+      setPickedAsset(asset)
+      setSelectedAsset({ uri: asset.uri, fileName: asset.fileName })
+      if (!uploadTitle.trim()) setUploadTitle(asset.fileName?.replace(/\.[^.]+$/, '') || 'Family memory')
+      setUploadMessage(null)
+    } catch (error) {
+      Alert.alert(t.tabs.upload, error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function uploadMemory() {
+    if (!pickedAsset || !session?.user.id) {
+      Alert.alert(t.tabs.upload, t.common.notReady)
+      return
+    }
+    if (!uploadTitle.trim()) {
+      Alert.alert(t.tabs.upload, locale === 'zh' ? '请填写标题。' : 'Enter a title first.')
+      return
+    }
+
+    setIsUploading(true)
+    setUploadMessage(null)
+    try {
+      await createMobileUpload({
+        userId: session.user.id,
+        title: uploadTitle.trim(),
+        note: uploadNote,
+        asset: pickedAsset,
+      })
+      setUploadMessage(t.upload.success)
+      setSelectedAsset(null)
+      setPickedAsset(null)
+      setUploadTitle('')
+      setUploadNote('')
+      refreshFamilyStatus()
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   if (isBooting) {
@@ -316,6 +378,12 @@ export default function App() {
                   <Text style={styles.secondaryButtonText}>{t.home.secondary}</Text>
                 </TouchableOpacity>
               </View>
+            ) : activeTab === 'upload' ? (
+              <View style={styles.actionsRow}>
+                <TouchableOpacity onPress={chooseMedia} style={styles.primaryButton}>
+                  <Text style={styles.primaryButtonText}>{t.upload.primary}</Text>
+                </TouchableOpacity>
+              </View>
             ) : 'primary' in active ? (
               <View style={styles.actionsRow}>
                 <TouchableOpacity onPress={() => Alert.alert(active.title, t.common.notReady)} style={styles.primaryButton}>
@@ -341,7 +409,17 @@ export default function App() {
             </View>
           ) : null}
 
-          {activeTab === 'upload' && 'steps' in active ? <BulletList items={active.steps} /> : null}
+          {activeTab === 'upload' ? (
+            <View style={styles.list}>
+              <TextInput value={uploadTitle} onChangeText={setUploadTitle} placeholder={t.upload.titleInput} placeholderTextColor="#9a3412" style={styles.inputLight} />
+              <TextInput value={uploadNote} onChangeText={setUploadNote} placeholder={t.upload.noteInput} placeholderTextColor="#9a3412" style={[styles.inputLight, styles.noteInput]} multiline />
+              {selectedAsset ? <Text style={styles.listText}>{t.upload.picked}: {selectedAsset.fileName ?? selectedAsset.uri}</Text> : null}
+              <TouchableOpacity onPress={uploadMemory} disabled={isUploading || !pickedAsset} style={[styles.primaryButtonFull, (!pickedAsset || isUploading) && styles.disabledButton]}>
+                <Text style={styles.primaryButtonText}>{isUploading ? t.common.loading : t.upload.send}</Text>
+              </TouchableOpacity>
+              {uploadMessage ? <Text style={styles.listText}>{uploadMessage}</Text> : null}
+            </View>
+          ) : null}
           {activeTab === 'family' && 'actions' in active ? <BulletList items={active.actions} /> : null}
           {activeTab === 'notifications' && 'items' in active ? <BulletList items={active.items} /> : null}
           {activeTab === 'menu' && 'items' in active ? (
@@ -385,6 +463,8 @@ const styles = StyleSheet.create({
   languageText: { color: '#7c2d12', fontWeight: '800' },
   authCard: { margin: 20, borderRadius: 32, padding: 22, backgroundColor: '#431407', gap: 14 },
   input: { borderRadius: 18, backgroundColor: '#fff7ed', paddingHorizontal: 16, paddingVertical: 13, color: '#431407', fontSize: 15 },
+  inputLight: { borderRadius: 18, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa', paddingHorizontal: 16, paddingVertical: 13, color: '#431407', fontSize: 15 },
+  noteInput: { minHeight: 86, textAlignVertical: 'top' },
   switchText: { color: '#fed7aa', textAlign: 'center', fontWeight: '700', marginTop: 4 },
   content: { padding: 20, paddingBottom: 120, gap: 16 },
   heroCard: { borderRadius: 32, padding: 22, backgroundColor: '#431407', shadowColor: '#7c2d12', shadowOffset: { width: 0, height: 18 }, shadowOpacity: 0.18, shadowRadius: 24, elevation: 8 },
@@ -393,6 +473,7 @@ const styles = StyleSheet.create({
   actionsRow: { marginTop: 22, flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   primaryButton: { borderRadius: 999, backgroundColor: '#f59e0b', paddingHorizontal: 18, paddingVertical: 12 },
   primaryButtonFull: { borderRadius: 999, backgroundColor: '#f59e0b', paddingHorizontal: 18, paddingVertical: 14, alignItems: 'center' },
+  disabledButton: { opacity: 0.55 },
   primaryButtonText: { color: '#431407', fontWeight: '800' },
   secondaryButton: { borderRadius: 999, borderWidth: 1, borderColor: '#fed7aa', paddingHorizontal: 18, paddingVertical: 12 },
   secondaryButtonText: { color: '#ffedd5', fontWeight: '700' },
