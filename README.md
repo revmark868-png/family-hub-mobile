@@ -9,11 +9,11 @@ This is separate from the Web version. The Web product is the feature/reference 
 - Apple App Store
 - Google Play
 
-## Current Prototype
+## Current Build State
 
-Implemented first shell:
+Implemented beyond the first shell:
 
-- Warm, simple family-oriented UI direction
+- Warm Family Hub visual system with rounded cards, amber accents, bottom tabs, media rows, invite/member cards, and upload preview
 - Bottom tabs:
   - Home
   - Upload
@@ -21,6 +21,17 @@ Implemented first shell:
   - Notifications
   - Menu
 - Chinese / English copy toggle
+- Supabase session persistence through SecureStore
+- Real sign in / sign up
+- Home tab connected to live family name, role, member count, upload count, and recent memories
+- Family tab connected to live member list and latest invite code when available
+- Notifications tab uses real recent uploads as a lightweight activity feed
+- Android media picker and upload flow
+- Mobile upload now mirrors the web storage-egress optimization:
+  - original object under `original/...`
+  - compressed display image under `display/...` at 1600px / JPEG 0.75
+  - thumbnail under `thumb/...` at 360px / JPEG 0.7
+  - `insert_upload` uses `original_url`, `display_url`, and `thumbnail_url` when the Supabase migration is present, with a legacy RPC fallback
 - Store-ready config placeholders:
   - iOS bundle ID: `ccwu.hima.familyhub`
   - Android package: `ccwu.hima.familyhub`
@@ -38,13 +49,12 @@ Then open with Expo Go or simulator.
 
 ## Next Build Steps
 
-1. Add Supabase config and auth session persistence.
-2. Implement real sign in / sign up.
-3. Parse invite deep links.
-4. Connect Home tab to family status.
-5. Implement native media picker and upload flow.
-6. Add push notification registration.
-7. Prepare TestFlight and Google Play Internal Testing builds.
+1. Parse invite deep links and auto-join after auth.
+2. Add native share sheet for invite links/codes and QR generation.
+3. Add profile/avatar/theme editing screens with parity to Web.
+4. Add push notification registration and notification preferences.
+5. Replace placeholder app icon/splash with final Family Hub art.
+6. Prepare Android internal testing build first, then TestFlight after Android stabilizes.
 
 ## Store Submission Checklist
 

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -69,6 +71,7 @@ const copy = {
       role: '角色',
       members: '成员',
       uploads: '回忆',
+      latest: '最近回忆',
     },
     upload: {
       title: '发送到家庭记忆墙',
@@ -85,6 +88,8 @@ const copy = {
       title: '家庭成员与邀请',
       subtitle: '下一阶段接入成员列表、邀请码、分享链接和二维码。',
       actions: ['复制邀请码', '分享邀请链接', '生成二维码', '显示设备入口'],
+      noInvite: '暂无可用邀请码',
+      members: '家庭成员',
     },
     notifications: {
       title: '通知中心',
@@ -136,6 +141,7 @@ const copy = {
       role: 'Role',
       members: 'Members',
       uploads: 'Memories',
+      latest: 'Latest memories',
     },
     upload: {
       title: 'Send to family wall',
@@ -152,6 +158,8 @@ const copy = {
       title: 'Family and invites',
       subtitle: 'Next phase connects members, invite code, share link, and QR code.',
       actions: ['Copy invite code', 'Share invite link', 'Generate QR code', 'Display device entry'],
+      noInvite: 'No invite code yet',
+      members: 'Family members',
     },
     notifications: {
       title: 'Notification center',
@@ -177,6 +185,19 @@ function BulletList({ items }: { items: readonly string[] }) {
       ))}
     </View>
   )
+}
+
+function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+    </View>
+  )
+}
+
+function EmptyCard({ text }: { text: string }) {
+  return <View style={styles.smallCard}><Text style={styles.cardText}>{text}</Text></View>
 }
 
 function AuthScreen({ locale, setLocale, onAuthed }: { locale: Locale; setLocale: (locale: Locale) => void; onAuthed: (session: Session) => void }) {
@@ -365,6 +386,10 @@ export default function App() {
         </View>
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.deviceFrameHint}>
+            <Text style={styles.deviceFrameText}>{Platform.OS === 'android' ? 'Android' : Platform.OS} · {locale === 'zh' ? '独立原生 APP 开发版' : 'Standalone native app build'}</Text>
+          </View>
+
           <View style={styles.heroCard}>
             <Text style={styles.screenTitle}>{active.title}</Text>
             <Text style={styles.screenSubtitle}>{active.subtitle}</Text>
@@ -396,7 +421,7 @@ export default function App() {
           {activeTab === 'home' ? (
             <View style={styles.cardGrid}>
               {familyError ? (
-                <View style={styles.smallCard}><Text style={styles.cardText}>{familyError}</Text></View>
+                <EmptyCard text={familyError} />
               ) : familyStatus?.familyName ? (
                 <>
                   <View style={styles.smallCard}><Text style={styles.cardNumber}>{t.home.family}</Text><Text style={styles.cardText}>{familyStatus.familyName}</Text></View>
@@ -404,8 +429,24 @@ export default function App() {
                   <View style={styles.smallCard}><Text style={styles.cardNumber}>{t.home.members} / {t.home.uploads}</Text><Text style={styles.cardText}>{familyStatus.memberCount} / {familyStatus.recentUploads}</Text></View>
                 </>
               ) : (
-                <View style={styles.smallCard}><Text style={styles.cardText}>{t.home.noFamily}</Text></View>
+                <EmptyCard text={t.home.noFamily} />
               )}
+              {familyStatus?.uploads.length ? (
+                <View style={styles.list}>
+                  <SectionTitle title={t.home.latest} subtitle={locale === 'zh' ? '使用缩略图加载，降低 Supabase 流量。' : 'Loads thumbnails to reduce Supabase traffic.'} />
+                  {familyStatus.uploads.slice(0, 4).map((item) => (
+                    <View key={item.id} style={styles.mediaRow}>
+                      <View style={styles.mediaThumb}>
+                        {item.thumbnailUrl ? <Image source={{ uri: item.thumbnailUrl }} style={styles.mediaImage} /> : <Text style={styles.mediaEmoji}>{item.mediaType === 'videos' ? '🎬' : '🖼️'}</Text>}
+                      </View>
+                      <View style={styles.mediaTextWrap}>
+                        <Text style={styles.mediaTitle}>{item.title}</Text>
+                        <Text style={styles.mediaMeta}>{item.displayScope ?? 'pending'} · {new Date(item.createdAt).toLocaleDateString()}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -413,15 +454,52 @@ export default function App() {
             <View style={styles.list}>
               <TextInput value={uploadTitle} onChangeText={setUploadTitle} placeholder={t.upload.titleInput} placeholderTextColor="#9a3412" style={styles.inputLight} />
               <TextInput value={uploadNote} onChangeText={setUploadNote} placeholder={t.upload.noteInput} placeholderTextColor="#9a3412" style={[styles.inputLight, styles.noteInput]} multiline />
-              {selectedAsset ? <Text style={styles.listText}>{t.upload.picked}: {selectedAsset.fileName ?? selectedAsset.uri}</Text> : null}
+              {selectedAsset ? (
+                <View style={styles.pickedCard}>
+                  <Image source={{ uri: selectedAsset.uri }} style={styles.pickedPreview} />
+                  <Text style={styles.listText}>{t.upload.picked}: {selectedAsset.fileName ?? selectedAsset.uri}</Text>
+                </View>
+              ) : <BulletList items={t.upload.steps} />}
               <TouchableOpacity onPress={uploadMemory} disabled={isUploading || !pickedAsset} style={[styles.primaryButtonFull, (!pickedAsset || isUploading) && styles.disabledButton]}>
                 <Text style={styles.primaryButtonText}>{isUploading ? t.common.loading : t.upload.send}</Text>
               </TouchableOpacity>
               {uploadMessage ? <Text style={styles.listText}>{uploadMessage}</Text> : null}
             </View>
           ) : null}
-          {activeTab === 'family' && 'actions' in active ? <BulletList items={active.actions} /> : null}
-          {activeTab === 'notifications' && 'items' in active ? <BulletList items={active.items} /> : null}
+          {activeTab === 'family' && 'actions' in active ? (
+            <View style={styles.list}>
+              <SectionTitle title={familyStatus?.familyName ?? t.family.title} subtitle={familyStatus?.inviteCode ? `${locale === 'zh' ? '邀请码' : 'Invite code'}: ${familyStatus.inviteCode}` : t.family.noInvite} />
+              <TouchableOpacity onPress={() => Alert.alert(t.tabs.family, familyStatus?.inviteCode ?? t.family.noInvite)} style={styles.inviteCard}>
+                <Text style={styles.inviteCode}>{familyStatus?.inviteCode ?? '— — — —'}</Text>
+                <Text style={styles.inviteHint}>{locale === 'zh' ? '点击查看 / 下一步接系统分享' : 'Tap to view / share sheet next'}</Text>
+              </TouchableOpacity>
+              <SectionTitle title={t.family.members} />
+              {familyStatus?.members.length ? familyStatus.members.map((member) => (
+                <View key={member.userId} style={styles.memberRow}>
+                  <View style={styles.avatarCircle}>{member.avatarUrl ? <Image source={{ uri: member.avatarUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{(member.name || member.role || '?').slice(0, 1).toUpperCase()}</Text>}</View>
+                  <View style={styles.mediaTextWrap}>
+                    <Text style={styles.mediaTitle}>{member.name ?? member.userId.slice(0, 8)}</Text>
+                    <Text style={styles.mediaMeta}>{member.role ?? 'member'} · {member.status ?? 'active'}</Text>
+                  </View>
+                </View>
+              )) : <EmptyCard text={t.home.noFamily} />}
+            </View>
+          ) : null}
+          {activeTab === 'notifications' && 'items' in active ? (
+            <View style={styles.list}>
+              <SectionTitle title={t.notifications.title} subtitle={locale === 'zh' ? '先用真实家庭数据生成轻量通知流。' : 'A lightweight feed from real family data first.'} />
+              {(familyStatus?.uploads ?? []).slice(0, 5).map((item) => (
+                <View key={item.id} style={styles.noticeRow}>
+                  <Text style={styles.noticeIcon}>{item.mediaType === 'videos' ? '🎬' : '✨'}</Text>
+                  <View style={styles.mediaTextWrap}>
+                    <Text style={styles.mediaTitle}>{item.title}</Text>
+                    <Text style={styles.mediaMeta}>{item.displayScope ?? 'pending'} · {new Date(item.createdAt).toLocaleString()}</Text>
+                  </View>
+                </View>
+              ))}
+              {!familyStatus?.uploads.length ? <BulletList items={active.items} /> : null}
+            </View>
+          ) : null}
           {activeTab === 'menu' && 'items' in active ? (
             <View style={styles.list}>
               {active.items.map((item) => (
@@ -467,6 +545,8 @@ const styles = StyleSheet.create({
   noteInput: { minHeight: 86, textAlignVertical: 'top' },
   switchText: { color: '#fed7aa', textAlign: 'center', fontWeight: '700', marginTop: 4 },
   content: { padding: 20, paddingBottom: 120, gap: 16 },
+  deviceFrameHint: { alignSelf: 'flex-start', borderRadius: 999, borderWidth: 1, borderColor: '#fed7aa', backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 7 },
+  deviceFrameText: { color: '#9a3412', fontSize: 11, fontWeight: '800' },
   heroCard: { borderRadius: 32, padding: 22, backgroundColor: '#431407', shadowColor: '#7c2d12', shadowOffset: { width: 0, height: 18 }, shadowOpacity: 0.18, shadowRadius: 24, elevation: 8 },
   screenTitle: { color: '#ffedd5', fontSize: 25, fontWeight: '800', lineHeight: 32 },
   screenSubtitle: { marginTop: 10, color: '#fed7aa', fontSize: 15, lineHeight: 23 },
@@ -482,10 +562,31 @@ const styles = StyleSheet.create({
   cardNumber: { color: '#ea580c', fontSize: 12, fontWeight: '800' },
   cardText: { marginTop: 6, color: '#431407', fontSize: 16, fontWeight: '700' },
   list: { borderRadius: 28, padding: 18, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#fed7aa', gap: 12 },
+  sectionHeader: { gap: 4 },
+  sectionTitle: { color: '#431407', fontSize: 18, fontWeight: '900' },
+  sectionSubtitle: { color: '#9a3412', fontSize: 13, lineHeight: 19, fontWeight: '600' },
   listRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   menuRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
   dot: { color: '#f97316', fontSize: 18, lineHeight: 22 },
   listText: { flex: 1, color: '#431407', fontSize: 15, lineHeight: 22, fontWeight: '600' },
+  mediaRow: { flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 20, backgroundColor: '#fff7ed', padding: 10 },
+  mediaThumb: { width: 62, height: 62, borderRadius: 18, overflow: 'hidden', backgroundColor: '#431407', alignItems: 'center', justifyContent: 'center' },
+  mediaImage: { width: '100%', height: '100%' },
+  mediaEmoji: { fontSize: 24 },
+  mediaTextWrap: { flex: 1, minWidth: 0 },
+  mediaTitle: { color: '#431407', fontSize: 15, fontWeight: '900' },
+  mediaMeta: { marginTop: 3, color: '#9a3412', fontSize: 12, fontWeight: '700' },
+  pickedCard: { borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#fed7aa', backgroundColor: '#fff7ed' },
+  pickedPreview: { width: '100%', height: 210, backgroundColor: '#431407' },
+  inviteCard: { borderRadius: 24, padding: 18, backgroundColor: '#431407', gap: 6 },
+  inviteCode: { color: '#ffedd5', fontSize: 28, fontWeight: '900', letterSpacing: 2 },
+  inviteHint: { color: '#fed7aa', fontSize: 13, fontWeight: '700' },
+  memberRow: { flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 20, backgroundColor: '#fff7ed', padding: 12 },
+  avatarCircle: { width: 48, height: 48, borderRadius: 24, overflow: 'hidden', backgroundColor: '#fed7aa', alignItems: 'center', justifyContent: 'center' },
+  avatarImage: { width: '100%', height: '100%' },
+  avatarText: { color: '#7c2d12', fontWeight: '900', fontSize: 18 },
+  noticeRow: { flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 20, backgroundColor: '#fff7ed', padding: 12 },
+  noticeIcon: { width: 34, fontSize: 22 },
   tabBar: { position: 'absolute', left: 14, right: 14, bottom: 16, flexDirection: 'row', borderRadius: 30, padding: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#fed7aa', shadowColor: '#7c2d12', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.16, shadowRadius: 18, elevation: 10 },
   tabItem: { flex: 1, minHeight: 58, borderRadius: 22, alignItems: 'center', justifyContent: 'center', gap: 3 },
   tabItemActive: { backgroundColor: '#ffedd5' },
