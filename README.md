@@ -58,3 +58,7 @@ Then open with Expo Go or simulator.
 - Apple privacy labels
 - Google Play data safety form
 - Production signing credentials
+
+## Domain Note
+
+The final production domain is not fixed yet. Do not hard-code `hima.ccwu.cc` as the permanent APP domain. Use environment variables for API/web fallback URLs and update them when the final domain is selected.
