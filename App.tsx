@@ -1,5 +1,6 @@
 import { StatusBar } from 'expo-status-bar'
 import type { Session } from '@supabase/supabase-js'
+import QRCode from 'react-native-qrcode-svg'
 import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
@@ -96,7 +97,9 @@ const copy = {
       joinInvite: '加入这个家庭',
       joining: '正在加入...',
       shareInvite: '分享邀请',
-      shareMessage: '加入我的 Family Hub 家庭，邀请码：{code}',
+      shareMessage: '加入我的 Family Hub 家庭，邀请码：{code}\n{link}',
+      qrTitle: '扫码加入',
+      qrHint: '家人可用 Family Hub APP 打开这个邀请链接。',
       joined: '已加入家庭：{name}',
     },
     notifications: {
@@ -172,7 +175,9 @@ const copy = {
       joinInvite: 'Join this family',
       joining: 'Joining...',
       shareInvite: 'Share invite',
-      shareMessage: 'Join my Family Hub family. Invite code: {code}',
+      shareMessage: 'Join my Family Hub family. Invite code: {code}\n{link}',
+      qrTitle: 'Scan to join',
+      qrHint: 'Family members can open this invite link with the Family Hub app.',
       joined: 'Joined family: {name}',
     },
     notifications: {
@@ -212,6 +217,10 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle?: string })
 
 function EmptyCard({ text }: { text: string }) {
   return <View style={styles.smallCard}><Text style={styles.cardText}>{text}</Text></View>
+}
+
+function buildInviteLink(code: string) {
+  return `familyhub://family?code=${encodeURIComponent(code)}`
 }
 
 function extractInviteCode(url: string | null) {
@@ -358,7 +367,8 @@ export default function App() {
       Alert.alert(t.tabs.family, t.family.noInvite)
       return
     }
-    await Share.share({ message: t.family.shareMessage.replace('{code}', code) })
+    const link = buildInviteLink(code)
+    await Share.share({ message: t.family.shareMessage.replace('{code}', code).replace('{link}', link), url: link })
   }
 
   useEffect(() => {
@@ -567,6 +577,15 @@ export default function App() {
                 <Text style={styles.inviteCode}>{familyStatus?.inviteCode ?? '— — — —'}</Text>
                 <Text style={styles.inviteHint}>{familyStatus?.inviteCode ? t.family.shareInvite : t.family.noInvite}</Text>
               </TouchableOpacity>
+              {familyStatus?.inviteCode ? (
+                <View style={styles.qrCard}>
+                  <Text style={styles.cardNumber}>{t.family.qrTitle}</Text>
+                  <View style={styles.qrBox}>
+                    <QRCode value={buildInviteLink(familyStatus.inviteCode)} size={178} backgroundColor="#fff7ed" color="#431407" />
+                  </View>
+                  <Text style={styles.cardText}>{t.family.qrHint}</Text>
+                </View>
+              ) : null}
               <SectionTitle title={t.family.members} />
               {familyStatus?.members.length ? familyStatus.members.map((member) => (
                 <View key={member.userId} style={styles.memberRow}>
@@ -677,6 +696,8 @@ const styles = StyleSheet.create({
   inviteCode: { color: '#ffedd5', fontSize: 28, fontWeight: '900', letterSpacing: 2 },
   pendingInviteCodeText: { color: '#431407' },
   inviteHint: { color: '#fed7aa', fontSize: 13, fontWeight: '700' },
+  qrCard: { borderRadius: 24, padding: 18, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa', gap: 12, alignItems: 'center' },
+  qrBox: { borderRadius: 22, padding: 14, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fdba74' },
   memberRow: { flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 20, backgroundColor: '#fff7ed', padding: 12 },
   avatarCircle: { width: 48, height: 48, borderRadius: 24, overflow: 'hidden', backgroundColor: '#fed7aa', alignItems: 'center', justifyContent: 'center' },
   avatarImage: { width: '100%', height: '100%' },

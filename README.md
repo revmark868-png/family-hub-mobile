@@ -26,7 +26,7 @@ Implemented beyond the first shell:
 - Home tab connected to live family name, role, member count, upload count, and recent memories
 - Family tab connected to live member list and latest invite code when available
 - Invite deep-link capture for `familyhub://family?code=...`, with auto-join after auth when backend RPC is installed
-- Native share sheet for reusable invite codes
+- Native share sheet and QR code for reusable invite codes
 - Notifications tab uses real recent uploads as a lightweight activity feed
 - Android media picker and upload flow
 - Mobile upload now mirrors the web storage-egress optimization:
@@ -61,11 +61,10 @@ That adds the authenticated `join_family_by_code(p_code text)` RPC used by the n
 
 ## Next Build Steps
 
-1. Add QR generation for invite links/codes.
-2. Add profile/avatar/theme editing screens with parity to Web.
-3. Add push notification registration and notification preferences.
-4. Replace placeholder app icon/splash with final Family Hub art.
-5. Prepare Android internal testing build first, then TestFlight after Android stabilizes.
+1. Add profile/avatar/theme editing screens with parity to Web.
+2. Add push notification registration and notification preferences.
+3. Replace placeholder app icon/splash with final Family Hub art.
+4. Prepare Android internal testing build first, then TestFlight after Android stabilizes.
 
 ## Store Submission Checklist
 
