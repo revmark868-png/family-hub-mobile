@@ -5,16 +5,18 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Platform,
   SafeAreaView,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native'
-import { loadFamilyStatus, type FamilyStatus } from './lib/family'
+import { joinFamilyByCode, loadFamilyStatus, type FamilyStatus } from './lib/family'
 import { supabase } from './lib/supabase'
 import { createMobileUpload, pickSingleMemory } from './lib/upload'
 
@@ -90,6 +92,12 @@ const copy = {
       actions: ['复制邀请码', '分享邀请链接', '生成二维码', '显示设备入口'],
       noInvite: '暂无可用邀请码',
       members: '家庭成员',
+      incomingInvite: '检测到邀请链接',
+      joinInvite: '加入这个家庭',
+      joining: '正在加入...',
+      shareInvite: '分享邀请',
+      shareMessage: '加入我的 Family Hub 家庭，邀请码：{code}',
+      joined: '已加入家庭：{name}',
     },
     notifications: {
       title: '通知中心',
@@ -160,6 +168,12 @@ const copy = {
       actions: ['Copy invite code', 'Share invite link', 'Generate QR code', 'Display device entry'],
       noInvite: 'No invite code yet',
       members: 'Family members',
+      incomingInvite: 'Invite link detected',
+      joinInvite: 'Join this family',
+      joining: 'Joining...',
+      shareInvite: 'Share invite',
+      shareMessage: 'Join my Family Hub family. Invite code: {code}',
+      joined: 'Joined family: {name}',
     },
     notifications: {
       title: 'Notification center',
@@ -198,6 +212,18 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle?: string })
 
 function EmptyCard({ text }: { text: string }) {
   return <View style={styles.smallCard}><Text style={styles.cardText}>{text}</Text></View>
+}
+
+function extractInviteCode(url: string | null) {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    const rawCode = parsed.searchParams.get('code') || parsed.searchParams.get('invite')
+    return rawCode?.trim().toUpperCase() || null
+  } catch {
+    const match = url.match(/[?&](?:code|invite)=([^&#]+)/i)
+    return match?.[1] ? decodeURIComponent(match[1]).trim().toUpperCase() : null
+  }
 }
 
 function AuthScreen({ locale, setLocale, onAuthed }: { locale: Locale; setLocale: (locale: Locale) => void; onAuthed: (session: Session) => void }) {
@@ -274,6 +300,9 @@ export default function App() {
   const [pickedAsset, setPickedAsset] = useState<Awaited<ReturnType<typeof pickSingleMemory>>>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadMessage, setUploadMessage] = useState<string | null>(null)
+  const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(null)
+  const [inviteMessage, setInviteMessage] = useState<string | null>(null)
+  const [isJoiningInvite, setIsJoiningInvite] = useState(false)
   const t = copy[locale]
   const active = useMemo(() => t[activeTab], [activeTab, t])
 
@@ -290,6 +319,48 @@ export default function App() {
     }
   }
 
+  function captureInviteFromUrl(url: string | null) {
+    const code = extractInviteCode(url)
+    if (!code) return
+    setPendingInviteCode(code)
+    setInviteMessage(null)
+    setActiveTab('family')
+  }
+
+  async function acceptPendingInvite(code = pendingInviteCode) {
+    if (!code) return
+    if (!session?.user.id) {
+      setActiveTab('family')
+      return
+    }
+
+    setIsJoiningInvite(true)
+    setInviteMessage(null)
+    try {
+      const result = await joinFamilyByCode(code)
+      if (result.ok) {
+        const familyName = result.familyName ?? (locale === 'zh' ? '你的家庭' : 'your family')
+        setInviteMessage(t.family.joined.replace('{name}', familyName))
+        setPendingInviteCode(null)
+        await refreshFamilyStatus(session.user.id)
+      } else {
+        setInviteMessage(result.message ?? (locale === 'zh' ? '无法加入这个家庭。' : 'Could not join this family.'))
+      }
+    } catch (error) {
+      setInviteMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsJoiningInvite(false)
+    }
+  }
+
+  async function shareInvite(code?: string | null) {
+    if (!code) {
+      Alert.alert(t.tabs.family, t.family.noInvite)
+      return
+    }
+    await Share.share({ message: t.family.shareMessage.replace('{code}', code) })
+  }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
@@ -297,15 +368,28 @@ export default function App() {
       if (data.session?.user.id) refreshFamilyStatus(data.session.user.id)
     })
 
+    Linking.getInitialURL().then(captureInviteFromUrl).catch(() => undefined)
+    const urlListener = Linking.addEventListener('url', ({ url }) => captureInviteFromUrl(url))
+
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
       if (nextSession?.user.id) refreshFamilyStatus(nextSession.user.id)
       else setFamilyStatus(null)
     })
 
-    return () => listener.subscription.unsubscribe()
+    return () => {
+      listener.subscription.unsubscribe()
+      urlListener.remove()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (session?.user.id && pendingInviteCode && !isJoiningInvite) {
+      acceptPendingInvite(pendingInviteCode)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user.id, pendingInviteCode])
 
   async function signOut() {
     await supabase.auth.signOut()
@@ -468,10 +552,20 @@ export default function App() {
           ) : null}
           {activeTab === 'family' && 'actions' in active ? (
             <View style={styles.list}>
+              {pendingInviteCode ? (
+                <View style={styles.pendingInviteCard}>
+                  <Text style={styles.cardNumber}>{t.family.incomingInvite}</Text>
+                  <Text style={[styles.inviteCode, styles.pendingInviteCodeText]}>{pendingInviteCode}</Text>
+                  <TouchableOpacity onPress={() => acceptPendingInvite()} disabled={isJoiningInvite || !session?.user.id} style={[styles.primaryButtonFull, isJoiningInvite && styles.disabledButton]}>
+                    <Text style={styles.primaryButtonText}>{isJoiningInvite ? t.family.joining : t.family.joinInvite}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              {inviteMessage ? <EmptyCard text={inviteMessage} /> : null}
               <SectionTitle title={familyStatus?.familyName ?? t.family.title} subtitle={familyStatus?.inviteCode ? `${locale === 'zh' ? '邀请码' : 'Invite code'}: ${familyStatus.inviteCode}` : t.family.noInvite} />
-              <TouchableOpacity onPress={() => Alert.alert(t.tabs.family, familyStatus?.inviteCode ?? t.family.noInvite)} style={styles.inviteCard}>
+              <TouchableOpacity onPress={() => shareInvite(familyStatus?.inviteCode)} style={styles.inviteCard}>
                 <Text style={styles.inviteCode}>{familyStatus?.inviteCode ?? '— — — —'}</Text>
-                <Text style={styles.inviteHint}>{locale === 'zh' ? '点击查看 / 下一步接系统分享' : 'Tap to view / share sheet next'}</Text>
+                <Text style={styles.inviteHint}>{familyStatus?.inviteCode ? t.family.shareInvite : t.family.noInvite}</Text>
               </TouchableOpacity>
               <SectionTitle title={t.family.members} />
               {familyStatus?.members.length ? familyStatus.members.map((member) => (
@@ -579,7 +673,9 @@ const styles = StyleSheet.create({
   pickedCard: { borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#fed7aa', backgroundColor: '#fff7ed' },
   pickedPreview: { width: '100%', height: 210, backgroundColor: '#431407' },
   inviteCard: { borderRadius: 24, padding: 18, backgroundColor: '#431407', gap: 6 },
+  pendingInviteCard: { borderRadius: 24, padding: 18, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fdba74', gap: 12 },
   inviteCode: { color: '#ffedd5', fontSize: 28, fontWeight: '900', letterSpacing: 2 },
+  pendingInviteCodeText: { color: '#431407' },
   inviteHint: { color: '#fed7aa', fontSize: 13, fontWeight: '700' },
   memberRow: { flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 20, backgroundColor: '#fff7ed', padding: 12 },
   avatarCircle: { width: 48, height: 48, borderRadius: 24, overflow: 'hidden', backgroundColor: '#fed7aa', alignItems: 'center', justifyContent: 'center' },

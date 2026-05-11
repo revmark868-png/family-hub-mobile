@@ -30,6 +30,12 @@ export type FamilyStatus = {
   inviteCode: string | null
 }
 
+export type JoinFamilyResult = {
+  ok: boolean
+  familyName?: string | null
+  message?: string | null
+}
+
 type UploadRow = {
   id: string
   title: string
@@ -54,6 +60,34 @@ async function signUpload(bucket: string, path?: string | null) {
   if (!path) return null
   const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60 * 24)
   return data?.signedUrl ?? null
+}
+
+function normalizeInviteCode(rawCode: string) {
+  return rawCode.trim().replace(/[^a-z0-9-]/gi, '').toUpperCase()
+}
+
+function isMissingJoinRpc(error?: { message?: string; code?: string } | null) {
+  return Boolean(error && (error.code === '42883' || /join_family_by_code|function .* does not exist/i.test(error.message ?? '')))
+}
+
+export async function joinFamilyByCode(rawCode: string): Promise<JoinFamilyResult> {
+  const code = normalizeInviteCode(rawCode)
+  if (!code) return { ok: false, message: 'Paste an invite code first.' }
+
+  const { data, error } = await supabase.rpc('join_family_by_code', { p_code: code })
+
+  if (isMissingJoinRpc(error)) {
+    return {
+      ok: false,
+      message: 'Mobile invite joining needs the join_family_by_code Supabase RPC. Run supabase/mobile-invite-rpc.sql once, then retry.',
+    }
+  }
+
+  if (error) return { ok: false, message: error.message }
+
+  const result = data as JoinFamilyResult | null
+  if (!result) return { ok: false, message: 'Invite join did not return a result.' }
+  return result
 }
 
 export async function loadFamilyStatus(userId: string): Promise<FamilyStatus> {

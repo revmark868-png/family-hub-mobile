@@ -25,6 +25,8 @@ Implemented beyond the first shell:
 - Real sign in / sign up
 - Home tab connected to live family name, role, member count, upload count, and recent memories
 - Family tab connected to live member list and latest invite code when available
+- Invite deep-link capture for `familyhub://family?code=...`, with auto-join after auth when backend RPC is installed
+- Native share sheet for reusable invite codes
 - Notifications tab uses real recent uploads as a lightweight activity feed
 - Android media picker and upload flow
 - Mobile upload now mirrors the web storage-egress optimization:
@@ -47,14 +49,23 @@ npm start
 
 Then open with Expo Go or simulator.
 
+## Backend Setup Notes
+
+Before testing mobile invite deep links, run this once in Supabase SQL Editor:
+
+```sql
+-- See supabase/mobile-invite-rpc.sql
+```
+
+That adds the authenticated `join_family_by_code(p_code text)` RPC used by the native app. This is separate from the web storage-egress migration Mark plans to run later.
+
 ## Next Build Steps
 
-1. Parse invite deep links and auto-join after auth.
-2. Add native share sheet for invite links/codes and QR generation.
-3. Add profile/avatar/theme editing screens with parity to Web.
-4. Add push notification registration and notification preferences.
-5. Replace placeholder app icon/splash with final Family Hub art.
-6. Prepare Android internal testing build first, then TestFlight after Android stabilizes.
+1. Add QR generation for invite links/codes.
+2. Add profile/avatar/theme editing screens with parity to Web.
+3. Add push notification registration and notification preferences.
+4. Replace placeholder app icon/splash with final Family Hub art.
+5. Prepare Android internal testing build first, then TestFlight after Android stabilizes.
 
 ## Store Submission Checklist
 
