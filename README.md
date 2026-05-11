@@ -62,3 +62,13 @@ Then open with Expo Go or simulator.
 ## Domain Note
 
 The final production domain is not fixed yet. Do not hard-code `hima.ccwu.cc` as the permanent APP domain. Use environment variables for API/web fallback URLs and update them when the final domain is selected.
+
+## Test Readiness Standard
+
+Do not ask Mark to test until the app is more than a technical shell. A testable build must include:
+
+- Complete visual system aligned with the Web Family Hub style: warm dark gradient, glass cards, rounded surfaces, amber accents, polished spacing.
+- Full bottom tabs with real mobile screens, not placeholder text.
+- Auth, family status, upload, family/invite, notifications, menu/settings, profile/avatar/theme/language entry points.
+- Android install/test path verified.
+- Clear known-issues list before delivery.
