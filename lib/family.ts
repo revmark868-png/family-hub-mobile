@@ -58,6 +58,7 @@ function isMissingVariantColumn(error?: { message?: string; code?: string } | nu
 
 async function signUpload(bucket: string, path?: string | null) {
   if (!path) return null
+  if (/^https?:\/\//i.test(path) || bucket === 'r2') return path
   const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60 * 24)
   return data?.signedUrl ?? null
 }
