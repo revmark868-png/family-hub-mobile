@@ -1,284 +1,157 @@
-import * as ImageManipulator from 'expo-image-manipulator'
 import * as ImagePicker from 'expo-image-picker'
+import * as ImageManipulator from 'expo-image-manipulator'
 import { supabase } from './supabase'
 
-const uploadsBucket = process.env.EXPO_PUBLIC_SUPABASE_UPLOADS_BUCKET ?? 'family-uploads'
-const r2SignUrl = process.env.EXPO_PUBLIC_R2_SIGN_URL ?? 'https://hima.ccwu.cc/upload/r2-sign'
-const DISPLAY_IMAGE_WIDTH = 2560
-const DISPLAY_IMAGE_COMPRESS = 0.88
-const THUMBNAIL_IMAGE_WIDTH = 360
-const THUMBNAIL_IMAGE_COMPRESS = 0.7
-
-type R2SignedObject = {
-  key: string
-  uploadUrl: string
-  publicUrl: string
+// ── 类型 ──────────────────────────────────────────────────────────────────
+export type PickedAsset = {
+  uri: string
+  fileName: string | null
+  mimeType: string | null
+  fileSize: number | null
 }
 
-function extFromUri(uri: string, mimeType?: string | null) {
-  const fromUri = uri.split('?')[0]?.split('.').pop()?.toLowerCase()
-  if (fromUri && fromUri.length <= 5) return fromUri
-  if (mimeType?.includes('png')) return 'png'
-  if (mimeType?.includes('webp')) return 'webp'
-  if (mimeType?.includes('gif')) return 'gif'
-  if (mimeType?.includes('video')) return 'mp4'
-  return 'jpg'
-}
+export type UploadProgressCallback = (phase: string, percent: number) => void
 
-function mediaTypeFromAsset(asset: ImagePicker.ImagePickerAsset) {
-  return asset.type === 'video' ? 'videos' : 'photos'
-}
-
-function isImageAsset(asset: ImagePicker.ImagePickerAsset) {
-  return asset.type !== 'video' && !asset.mimeType?.includes('gif')
-}
-
-async function uriToBlob(uri: string) {
-  const response = await fetch(uri)
-  return response.blob()
-}
-
-async function makeImageVariant(asset: ImagePicker.ImagePickerAsset, width: number, compress: number) {
-  const result = await ImageManipulator.manipulateAsync(
-    asset.uri,
-    [{ resize: { width } }],
-    { compress, format: ImageManipulator.SaveFormat.JPEG },
-  )
-  const blob = await uriToBlob(result.uri)
-  return { uri: result.uri, blob, mimeType: 'image/jpeg' }
-}
-
-export async function pickSingleMemory() {
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync()
-  if (!permission.granted) {
-    throw new Error('Photo library permission is required.')
+// ── 媒体选择（请求权限 → 打开相册）──────────────────────────────────────
+export async function pickSingleMemory(): Promise<PickedAsset | null> {
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+  if (status !== 'granted') {
+    throw new Error('需要相册权限才能选择照片或视频。请在系统设置中开启。')
   }
 
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.All,
-    allowsEditing: false,
     quality: 1,
-    videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+    allowsEditing: false,
   })
 
-  if (result.canceled || !result.assets[0]) return null
-  return result.assets[0]
-}
+  if (result.canceled || !result.assets?.[0]) return null
 
-async function uploadBlob(path: string, blob: Blob, mimeType: string) {
-  const { error } = await supabase.storage
-    .from(uploadsBucket)
-    .upload(path, blob, {
-      cacheControl: '31536000',
-      upsert: false,
-      contentType: mimeType,
-    })
-  if (error) throw error
-}
-
-async function signR2Objects(objects: Array<{ key: string; contentType: string }>, accessToken: string) {
-  if (!r2SignUrl) return null
-
-  const response = await fetch(r2SignUrl, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ objects }),
-  })
-
-  if (!response.ok) return null
-  const result = await response.json().catch(() => null) as { ok?: boolean; objects?: R2SignedObject[] } | null
-  return result?.ok ? result.objects ?? null : null
-}
-
-async function uploadR2Blob(blob: Blob, signed: R2SignedObject, mimeType: string) {
-  const response = await fetch(signed.uploadUrl, {
-    method: 'PUT',
-    headers: {
-      'content-type': mimeType || 'application/octet-stream',
-      'cache-control': 'public, max-age=31536000, immutable',
-    },
-    body: blob,
-  })
-
-  if (!response.ok) throw new Error(`R2 upload failed: ${response.status}`)
-}
-
-async function uploadVariants({
-  familyId,
-  userId,
-  uploadId,
-  extension,
-  originalBlob,
-  originalMimeType,
-  display,
-  thumb,
-  accessToken,
-}: {
-  familyId: string
-  userId: string
-  uploadId: string
-  extension: string
-  originalBlob: Blob
-  originalMimeType: string
-  display: { blob: Blob; mimeType: string } | null
-  thumb: { blob: Blob; mimeType: string } | null
-  accessToken: string
-}) {
-  const originalSupabasePath = `${familyId}/${userId}/original/${uploadId}.${extension}`
-  const displaySupabasePath = display ? `${familyId}/${userId}/display/${uploadId}.jpg` : originalSupabasePath
-  const thumbnailSupabasePath = thumb ? `${familyId}/${userId}/thumb/${uploadId}.jpg` : displaySupabasePath
-  const uploadedSupabasePaths: string[] = []
-
-  const r2Objects = [
-    { key: `uploads/${familyId}/${userId}/original/${uploadId}.${extension}`, contentType: originalMimeType },
-    ...(display ? [{ key: `uploads/${familyId}/${userId}/display/${uploadId}.jpg`, contentType: display.mimeType }] : []),
-    ...(thumb ? [{ key: `uploads/${familyId}/${userId}/thumb/${uploadId}.jpg`, contentType: thumb.mimeType }] : []),
-  ]
-
-  const signed = await signR2Objects(r2Objects, accessToken)
-  if (signed?.length === r2Objects.length) {
-    try {
-      const [originalSigned, displaySigned, thumbSigned] = signed
-      await uploadR2Blob(originalBlob, originalSigned!, originalMimeType)
-      if (display && displaySigned) await uploadR2Blob(display.blob, displaySigned, display.mimeType)
-      if (thumb && thumbSigned) await uploadR2Blob(thumb.blob, thumbSigned, thumb.mimeType)
-
-      return {
-        bucket: 'r2',
-        originalPath: originalSigned!.publicUrl,
-        displayPath: display && displaySigned ? displaySigned.publicUrl : originalSigned!.publicUrl,
-        thumbnailPath: thumb && thumbSigned ? thumbSigned.publicUrl : (display && displaySigned ? displaySigned.publicUrl : originalSigned!.publicUrl),
-        uploadedSupabasePaths,
-      }
-    } catch (error) {
-      console.warn('[MobileUpload] R2 upload failed; falling back to Supabase Storage.', error)
-    }
-  }
-
-  await uploadBlob(originalSupabasePath, originalBlob, originalMimeType)
-  uploadedSupabasePaths.push(originalSupabasePath)
-
-  if (display) {
-    await uploadBlob(displaySupabasePath, display.blob, display.mimeType)
-    uploadedSupabasePaths.push(displaySupabasePath)
-  }
-
-  if (thumb) {
-    await uploadBlob(thumbnailSupabasePath, thumb.blob, thumb.mimeType)
-    uploadedSupabasePaths.push(thumbnailSupabasePath)
-  }
-
+  const asset = result.assets[0]
   return {
-    bucket: uploadsBucket,
-    originalPath: originalSupabasePath,
-    displayPath: displaySupabasePath,
-    thumbnailPath: thumbnailSupabasePath,
-    uploadedSupabasePaths,
+    uri: asset.uri,
+    fileName: asset.fileName ?? null,
+    mimeType: asset.mimeType ?? null,
+    fileSize: asset.fileSize ?? null,
   }
 }
 
-export async function createMobileUpload({
-  userId,
-  title,
-  note,
-  asset,
-}: {
+// ── 辅助：URI → Blob（React Native fetch 支持 file:// URI）────────────────
+async function uriToBlob(uri: string): Promise<Blob> {
+  const response = await fetch(uri)
+  return response.blob()
+}
+
+// ── 辅助：压缩图片 ────────────────────────────────────────────────────────
+async function compressImage(uri: string, maxWidth: number, quality: number): Promise<string> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: maxWidth } }],
+    { compress: quality, format: ImageManipulator.SaveFormat.JPEG }
+  )
+  return result.uri
+}
+
+// ── 上传主函数 ────────────────────────────────────────────────────────────
+export async function createMobileUpload(params: {
   userId: string
   title: string
-  note?: string
-  asset: ImagePicker.ImagePickerAsset
-}) {
-  const { data: membership, error: membershipError } = await supabase
-    .from('family_members')
-    .select('family_id')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .limit(1)
-    .maybeSingle()
+  note: string
+  asset: PickedAsset
+  onProgress?: UploadProgressCallback
+}): Promise<void> {
+  const { userId, title, note, asset, onProgress } = params
+  const bucket = process.env.EXPO_PUBLIC_SUPABASE_UPLOADS_BUCKET ?? 'family-uploads'
+  const isVideo = asset.mimeType?.startsWith('video/') ?? false
+  const ext = isVideo ? 'mp4' : 'jpg'
+  const timestamp = Date.now()
+  const basePath = `${userId}/${timestamp}`
 
-  if (membershipError) throw membershipError
-  if (!membership?.family_id) throw new Error('Join or create a family before uploading memories.')
+  let originalUrl = ''
+  let displayUrl = ''
+  let thumbnailUrl = ''
 
-  const { data: sessionData } = await supabase.auth.getSession()
-  const accessToken = sessionData.session?.access_token
-  if (!accessToken) throw new Error('Sign in again before uploading memories.')
-
+  // ── Phase 1: 上传原图 ──────────────────────────────────────────────────
+  onProgress?.('上传原文件…', 10)
   const originalBlob = await uriToBlob(asset.uri)
-  const mimeType = asset.mimeType ?? originalBlob.type ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg')
-  const extension = extFromUri(asset.uri, mimeType)
-  const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  const uploadedPaths: string[] = []
-
-  try {
-    let display: { blob: Blob; mimeType: string } | null = null
-    let thumb: { blob: Blob; mimeType: string } | null = null
-
-    if (isImageAsset(asset)) {
-      display = await makeImageVariant(asset, DISPLAY_IMAGE_WIDTH, DISPLAY_IMAGE_COMPRESS)
-      thumb = await makeImageVariant(asset, THUMBNAIL_IMAGE_WIDTH, THUMBNAIL_IMAGE_COMPRESS)
-    }
-
-    const uploadLocation = await uploadVariants({
-      familyId: membership.family_id,
-      userId,
-      uploadId,
-      extension,
-      originalBlob,
-      originalMimeType: mimeType,
-      display,
-      thumb,
-      accessToken,
+  const { error: origErr } = await supabase.storage
+    .from(bucket)
+    .upload(`original/${basePath}.${ext}`, originalBlob, {
+      contentType: asset.mimeType ?? 'application/octet-stream',
+      upsert: false,
     })
-    uploadedPaths.push(...uploadLocation.uploadedSupabasePaths)
+  if (origErr) throw new Error(`原文件上传失败: ${origErr.message}`)
 
-    const { data: lastOrdered } = await supabase
-      .from('uploads')
-      .select('display_order')
-      .eq('family_id', membership.family_id)
-      .order('display_order', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+  const { data: origData } = supabase.storage
+    .from(bucket)
+    .getPublicUrl(`original/${basePath}.${ext}`)
+  originalUrl = origData.publicUrl
 
-    const uploadRecord = {
-      p_family_id: membership.family_id,
-      p_created_by: userId,
-      p_title: title,
-      p_note: note?.trim() || null,
-      p_media_type: mediaTypeFromAsset(asset),
-      p_bucket: uploadLocation.bucket,
-      p_file_path: uploadLocation.displayPath,
-      p_original_filename: asset.fileName ?? `mobile-upload.${extension}`,
-      p_file_size: asset.fileSize ?? originalBlob.size,
-      p_mime_type: mimeType,
-      p_display_order: (lastOrdered?.display_order ?? -1) + 1,
-      p_display_scope: 'pending',
-    }
-
-    let { error: rpcError } = await supabase.rpc('insert_upload', {
-      ...uploadRecord,
-      p_original_url: uploadLocation.originalPath,
-      p_display_url: uploadLocation.displayPath,
-      p_thumbnail_url: uploadLocation.thumbnailPath,
-    })
-
-    if (rpcError && /p_original_url|p_display_url|p_thumbnail_url|function .* does not exist/i.test(rpcError.message)) {
-      ;({ error: rpcError } = await supabase.rpc('insert_upload', uploadRecord))
-    }
-
-    if (rpcError) throw rpcError
-
-    return {
-      originalPath: uploadLocation.originalPath,
-      displayPath: uploadLocation.displayPath,
-      thumbnailPath: uploadLocation.thumbnailPath,
-    }
-  } catch (error) {
-    if (uploadedPaths.length > 0) {
-      await supabase.storage.from(uploadsBucket).remove(uploadedPaths).catch(() => undefined)
-    }
-    throw error
+  // ── Phase 2: 压缩 display 图（图片才压缩）────────────────────────────
+  onProgress?.('生成展示图…', 45)
+  if (!isVideo) {
+    const displayUri = await compressImage(asset.uri, 1600, 0.75)
+    const displayBlob = await uriToBlob(displayUri)
+    const { error: dispErr } = await supabase.storage
+      .from(bucket)
+      .upload(`display/${basePath}.jpg`, displayBlob, {
+        contentType: 'image/jpeg',
+        upsert: false,
+      })
+    if (dispErr) throw new Error(`展示图上传失败: ${dispErr.message}`)
+    const { data: dispData } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(`display/${basePath}.jpg`)
+    displayUrl = dispData.publicUrl
+  } else {
+    displayUrl = originalUrl
   }
+
+  // ── Phase 3: 压缩缩略图 ────────────────────────────────────────────────
+  onProgress?.('生成缩略图…', 70)
+  if (!isVideo) {
+    const thumbUri = await compressImage(asset.uri, 360, 0.7)
+    const thumbBlob = await uriToBlob(thumbUri)
+    const { error: thumbErr } = await supabase.storage
+      .from(bucket)
+      .upload(`thumb/${basePath}.jpg`, thumbBlob, {
+        contentType: 'image/jpeg',
+        upsert: false,
+      })
+    if (thumbErr) throw new Error(`缩略图上传失败: ${thumbErr.message}`)
+    const { data: thumbData } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(`thumb/${basePath}.jpg`)
+    thumbnailUrl = thumbData.publicUrl
+  } else {
+    thumbnailUrl = originalUrl
+  }
+
+  // ── Phase 4: 写入数据库 ────────────────────────────────────────────────
+  onProgress?.('保存记录…', 90)
+
+  // 优先用新版 insert_upload（三 URL），fallback 到旧版
+  const { error: rpcErr } = await supabase.rpc('insert_upload', {
+    p_user_id: userId,
+    p_title: title,
+    p_note: note,
+    p_media_type: isVideo ? 'videos' : 'photos',
+    p_original_url: originalUrl,
+    p_display_url: displayUrl,
+    p_thumbnail_url: thumbnailUrl,
+  })
+
+  if (rpcErr) {
+    // fallback：旧版只传 original_url
+    const { error: fallbackErr } = await supabase.rpc('insert_upload_legacy', {
+      p_user_id: userId,
+      p_title: title,
+      p_note: note,
+      p_media_type: isVideo ? 'videos' : 'photos',
+      p_original_url: originalUrl,
+    })
+    if (fallbackErr) throw new Error(`写入记录失败: ${fallbackErr.message}`)
+  }
+
+  onProgress?.('完成', 100)
 }
